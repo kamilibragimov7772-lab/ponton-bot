@@ -9,6 +9,22 @@ def get_db():
     db.execute("PRAGMA journal_mode=WAL")
     return db
 
+def parse_admin_ids():
+    raw = os.environ.get("ADMIN_IDS", "").strip()
+    ids = []
+
+    if raw:
+        for part in raw.split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.append(int(part))
+
+    # запасной вариант, если переменная не задана
+    if not ids:
+        ids = [319637013, 327659980]
+
+    return ids
+
 def init_db():
     db = get_db()
     db.executescript("""
@@ -56,16 +72,18 @@ def init_db():
     """)
     db.commit()
 
-    # Insert default admins
-    admins = [
-        (319637013, "Admin 1"),
-        (327659980, "Admin 2"),
-    ]
-    for tid, name in admins:
+    admin_ids = parse_admin_ids()
+    print(f"[DB] ADMIN_IDS = {admin_ids}")
+
+    for i, tid in enumerate(admin_ids, start=1):
         try:
-            db.execute("INSERT OR IGNORE INTO admins (telegram_id, name) VALUES (?,?)", (tid, name))
-        except:
-            pass
+            db.execute(
+                "INSERT OR IGNORE INTO admins (telegram_id, name) VALUES (?, ?)",
+                (tid, f"Admin {i}")
+            )
+        except Exception as e:
+            print(f"[DB] cannot insert admin {tid}: {e}")
+
     db.commit()
     db.close()
 
@@ -77,11 +95,10 @@ def is_admin(telegram_id):
 
 def get_all_admins():
     db = get_db()
-    r = db.execute("SELECT telegram_id FROM admins").fetchall()
+    r = db.execute("SELECT telegram_id FROM admins ORDER BY id").fetchall()
     db.close()
     return [row["telegram_id"] for row in r]
 
-# Sessions
 def create_session(movie, date, time, price, total_seats):
     db = get_db()
     cur = db.execute(
@@ -127,7 +144,6 @@ def delete_session(sid):
     db.commit()
     db.close()
 
-# Seats
 def get_taken_seats(session_id):
     db = get_db()
     r = db.execute(
@@ -136,7 +152,6 @@ def get_taken_seats(session_id):
     db.close()
     return [row["seat_num"] for row in r]
 
-# Bookings
 def create_booking(session_id, telegram_id, username, first_name, last_name, phone, seats, price):
     db = get_db()
     seats_str = ",".join(str(s) for s in seats)
@@ -148,11 +163,13 @@ def create_booking(session_id, telegram_id, username, first_name, last_name, pho
             (session_id, telegram_id, username, first_name, last_name, phone, seats_str, price)
         )
         booking_id = cur.lastrowid
+
         for seat in seats:
             db.execute(
                 "INSERT INTO booked_seats (session_id, seat_num, booking_id) VALUES (?,?,?)",
                 (session_id, seat, booking_id)
             )
+
         db.commit()
         db.close()
         return booking_id
@@ -192,21 +209,22 @@ def update_booking_status(bid, status):
 def get_all_bookings():
     db = get_db()
     r = db.execute("""
-        SELECT b.*, s.movie, s.date, s.time 
-        FROM bookings b JOIN sessions s ON b.session_id = s.id
-        ORDER BY b.created_at DESC LIMIT 50
+        SELECT b.*, s.movie, s.date, s.time
+        FROM bookings b
+        JOIN sessions s ON b.session_id = s.id
+        ORDER BY b.created_at DESC
+        LIMIT 50
     """).fetchall()
     db.close()
     return [dict(row) for row in r]
 
 def get_sessions_starting_in(minutes_from=55, minutes_to=65):
-    """Sessions starting in ~1 hour"""
     db = get_db()
     r = db.execute("""
-        SELECT * FROM sessions 
-        WHERE is_active=1 
-        AND datetime(date || ' ' || time) BETWEEN 
-            datetime('now', 'localtime', '+' || ? || ' minutes') AND 
+        SELECT * FROM sessions
+        WHERE is_active=1
+        AND datetime(date || ' ' || time) BETWEEN
+            datetime('now', 'localtime', '+' || ? || ' minutes') AND
             datetime('now', 'localtime', '+' || ? || ' minutes')
     """, (minutes_from, minutes_to)).fetchall()
     db.close()
