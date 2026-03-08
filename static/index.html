@@ -174,10 +174,17 @@ input:focus{border-color:var(--orange);}
 
 <script>
 const tg = window.Telegram?.WebApp;
-if(tg){tg.expand();try{tg.setHeaderColor('#0e0e0e');}catch(e){}}
+if (tg) {
+  tg.expand();
+  try { tg.setHeaderColor('#0e0e0e'); } catch(e) {}
+}
 
 const ROWS = ['A','B','C','D','E','F'];
-let sessions=[], selectedSession=null, takenSeats=[], selectedSeats=[], currentStep=1;
+let sessions = [];
+let selectedSession = null;
+let takenSeats = [];
+let selectedSeats = [];
+let currentStep = 1;
 
 const steps = {
   1:{title:'Выбор сеанса', btn:'Выбрать места →', back:null},
@@ -187,57 +194,62 @@ const steps = {
 };
 
 function showStep(n){
-  currentStep=n;
-  document.querySelectorAll('.step').forEach(s=>s.classList.remove('active'));
-  const el = n==='success' ? document.getElementById('stepSuccess') : document.getElementById('step'+n);
-  if(el) el.classList.add('active');
-  const cfg = steps[n]||{};
-  document.getElementById('pageTitle').textContent = cfg.title||'';
+  currentStep = n;
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  const el = n === 'success' ? document.getElementById('stepSuccess') : document.getElementById('step' + n);
+  if (el) el.classList.add('active');
+
+  const cfg = steps[n] || {};
+  document.getElementById('pageTitle').textContent = cfg.title || '';
+
   const btn = document.getElementById('mainBtn');
-  btn.textContent = cfg.btn||'';
+  btn.textContent = cfg.btn || '';
   btn.style.display = cfg.btn ? '' : 'none';
   btn.disabled = true;
+
   const backBtn = document.getElementById('backBtn');
   backBtn.style.display = cfg.back ? '' : 'none';
+
   updateBtn();
 }
 
 function goBack(){
   const cfg = steps[currentStep];
-  if(cfg&&cfg.back) showStep(cfg.back);
+  if (cfg && cfg.back) showStep(cfg.back);
 }
 
 function updateBtn(){
   const btn = document.getElementById('mainBtn');
-  if(currentStep===1) btn.disabled = !selectedSession;
-  else if(currentStep===2) btn.disabled = selectedSeats.length===0;
-  else if(currentStep===3) btn.disabled = false;
+  if (currentStep === 1) btn.disabled = !selectedSession;
+  else if (currentStep === 2) btn.disabled = selectedSeats.length === 0;
+  else if (currentStep === 3) btn.disabled = false;
 }
 
 function nextStep(){
-  if(currentStep===1) goToSeats();
-  else if(currentStep===2) goToForm();
-  else if(currentStep===3) submitBooking();
+  if (currentStep === 1) goToSeats();
+  else if (currentStep === 2) goToForm();
+  else if (currentStep === 3) submitBooking();
 }
 
 // ── Step 1 ──
 async function loadSessions(){
-  try{
+  try {
     const r = await fetch('/api/sessions');
     sessions = await r.json();
     renderSessions();
-  }catch(e){
-    document.getElementById('sessionList').innerHTML='<div class="empty">Ошибка загрузки. Попробуйте позже.</div>';
+  } catch(e) {
+    document.getElementById('sessionList').innerHTML = '<div class="empty">Ошибка загрузки. Попробуйте позже.</div>';
   }
 }
 
 function renderSessions(){
   const el = document.getElementById('sessionList');
-  if(!sessions.length){
-    el.innerHTML='<div class="empty">Нет активных сеансов</div>';
+  if (!sessions.length) {
+    el.innerHTML = '<div class="empty">Нет активных сеансов</div>';
     return;
   }
-  el.innerHTML = sessions.map(s=>`
+
+  el.innerHTML = sessions.map(s => `
     <div class="session-card" id="sc_${s.id}" onclick="selectSession(${s.id})">
       <div class="session-movie">${s.movie}</div>
       <div class="session-info">
@@ -251,126 +263,158 @@ function renderSessions(){
 }
 
 function selectSession(id){
-  selectedSession = sessions.find(s=>s.id===id);
-  document.querySelectorAll('.session-card').forEach(c=>c.classList.remove('selected'));
-  document.getElementById('sc_'+id).classList.add('selected');
+  selectedSession = sessions.find(s => s.id === id);
+  document.querySelectorAll('.session-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById('sc_' + id).classList.add('selected');
   updateBtn();
 }
 
 // ── Step 2 ──
 async function goToSeats(){
   showStep(2);
-  document.getElementById('sessionHeader').textContent = 
+  document.getElementById('sessionHeader').textContent =
     `🎬 ${selectedSession.movie} — ${selectedSession.date} в ${selectedSession.time}`;
-  selectedSeats=[];
+  selectedSeats = [];
+  document.getElementById('selCount').textContent = '0';
+  document.getElementById('selTotal').textContent = '0 ₽';
   await loadSeats();
 }
 
 async function loadSeats(){
-  document.getElementById('seatMap').innerHTML='<div class="empty">Загрузка...</div>';
-  try{
+  document.getElementById('seatMap').innerHTML = '<div class="empty">Загрузка...</div>';
+  try {
     const r = await fetch(`/api/seats/${selectedSession.id}`);
     const data = await r.json();
-    takenSeats = data.taken;
+    takenSeats = data.taken || [];
     renderSeats();
-  }catch(e){
-    document.getElementById('seatMap').innerHTML='<div class="empty" style="color:var(--orange)">Ошибка загрузки мест</div>';
+  } catch(e) {
+    document.getElementById('seatMap').innerHTML = '<div class="empty" style="color:var(--orange)">Ошибка загрузки мест</div>';
   }
 }
 
 function renderSeats(){
   const map = document.getElementById('seatMap');
-  map.innerHTML='';
+  map.innerHTML = '';
   const total = selectedSession.total_seats;
   const cols = Math.ceil(total / ROWS.length);
-  let num=1;
-  for(let r=0;r<ROWS.length;r++){
-    if(num>total) break;
+  let num = 1;
+
+  for (let r = 0; r < ROWS.length; r++) {
+    if (num > total) break;
+
     const row = document.createElement('div');
-    row.className='row';
-    const lbl=document.createElement('div');
-    lbl.className='row-lbl';lbl.textContent=ROWS[r];
+    row.className = 'row';
+
+    const lbl = document.createElement('div');
+    lbl.className = 'row-lbl';
+    lbl.textContent = ROWS[r];
     row.appendChild(lbl);
-    for(let c=0;c<cols;c++){
-      if(num>total) break;
-      const n=num++;
-      const seat=document.createElement('div');
-      seat.className='seat'+(takenSeats.includes(n)?' taken':'');
-      seat.textContent=n;seat.dataset.num=n;
-      if(!takenSeats.includes(n)) seat.addEventListener('click',()=>toggleSeat(n,seat));
+
+    for (let c = 0; c < cols; c++) {
+      if (num > total) break;
+
+      const n = num++;
+      const seat = document.createElement('div');
+      seat.className = 'seat' + (takenSeats.includes(n) ? ' taken' : '');
+      seat.textContent = n;
+      seat.dataset.num = n;
+
+      if (!takenSeats.includes(n)) {
+        seat.addEventListener('click', () => toggleSeat(n, seat));
+      }
+
       row.appendChild(seat);
     }
+
     map.appendChild(row);
   }
 }
 
-function toggleSeat(n,el){
-  if(selectedSeats.includes(n)){
-    selectedSeats=selectedSeats.filter(s=>s!==n);
+function toggleSeat(n, el){
+  if (selectedSeats.includes(n)) {
+    selectedSeats = selectedSeats.filter(s => s !== n);
     el.classList.remove('selected');
-  }else{
+  } else {
     selectedSeats.push(n);
     el.classList.add('selected');
   }
-  const cnt=selectedSeats.length;
-  document.getElementById('selCount').textContent=cnt;
-  document.getElementById('selTotal').textContent=(cnt*selectedSession.price).toLocaleString('ru')+' ₽';
+
+  const cnt = selectedSeats.length;
+  document.getElementById('selCount').textContent = cnt;
+  document.getElementById('selTotal').textContent = (cnt * selectedSession.price).toLocaleString('ru') + ' ₽';
   updateBtn();
 }
 
 // ── Step 3 ──
 function goToForm(){
   showStep(3);
-  const seats=selectedSeats.sort((a,b)=>a-b).join(', ');
-  const total=(selectedSeats.length*selectedSession.price).toLocaleString('ru');
-  document.getElementById('bookSummary').innerHTML=`
+  const seats = [...selectedSeats].sort((a,b)=>a-b).join(', ');
+  const total = (selectedSeats.length * selectedSession.price).toLocaleString('ru');
+
+  document.getElementById('bookSummary').innerHTML = `
     <div class="info-row"><div class="info-key">Фильм</div><div class="info-val">${selectedSession.movie}</div></div>
     <div class="info-row"><div class="info-key">Дата и время</div><div class="info-val">${selectedSession.date} в ${selectedSession.time}</div></div>
     <div class="info-row"><div class="info-key">Места</div><div class="info-val">${seats}</div></div>
     <div class="info-row"><div class="info-key">К оплате</div><div class="info-val orange">${total} ₽</div></div>
   `;
-  document.getElementById('mainBtn').disabled=false;
+
+  document.getElementById('mainBtn').disabled = false;
 }
 
 // ── Submit ──
 async function submitBooking(){
-  const firstName=document.getElementById('firstName').value.trim();
-  const lastName=document.getElementById('lastName').value.trim();
-  const phone=document.getElementById('phone').value.trim();
-  const errEl=document.getElementById('formErr');
+  const firstName = document.getElementById('firstName').value.trim();
+  const lastName = document.getElementById('lastName').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  const errEl = document.getElementById('formErr');
+  const btn = document.getElementById('mainBtn');
 
-  if(!firstName||!lastName||!phone){
-    errEl.textContent='Заполните все поля';errEl.classList.add('show');return;
+  if (!firstName || !lastName || !phone) {
+    errEl.textContent = 'Заполните все поля';
+    errEl.classList.add('show');
+    return;
   }
+
   errEl.classList.remove('show');
+  btn.disabled = true;
+  btn.textContent = 'Бронируем...';
 
-  const btn=document.getElementById('mainBtn');
-  btn.disabled=true;btn.textContent='Бронируем...';
-
-  const payload={
-    session_id:selectedSession.id,
-    seats:selectedSeats,
-    first_name:firstName,
-    last_name:lastName,
-    phone,
-    telegram_id:tg?.initDataUnsafe?.user?.id||null,
-    username:tg?.initDataUnsafe?.user?.username||''
+  const payload = {
+    session_id: selectedSession.id,
+    seats: selectedSeats,
+    first_name: firstName,
+    last_name: lastName,
+    phone: phone,
+    telegram_id: tg?.initDataUnsafe?.user?.id || null,
+    username: tg?.initDataUnsafe?.user?.username || ''
   };
 
-  // Send via Telegram WebApp or API
-  if(tg&&tg.sendData){
-    tg.sendData(JSON.stringify(payload));
-    showStep('success');
-  } else {
-    try{
-      const r=await fetch('/api/book',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      const data=await r.json();
-      if(data.ok) showStep('success');
-      else{errEl.textContent=data.error||'Ошибка';errEl.classList.add('show');btn.disabled=false;btn.textContent='Подтвердить бронь';}
-    }catch(e){
-      errEl.textContent='Ошибка соединения';errEl.classList.add('show');
-      btn.disabled=false;btn.textContent='Подтвердить бронь';
+  console.log('[BOOKING PAYLOAD]', payload);
+
+  try {
+    const r = await fetch('/api/book', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await r.json();
+    console.log('[BOOKING RESPONSE]', data);
+
+    if (data.ok) {
+      showStep('success');
+    } else {
+      errEl.textContent = data.error || 'Ошибка';
+      errEl.classList.add('show');
+      btn.disabled = false;
+      btn.textContent = 'Подтвердить бронь';
     }
+  } catch (e) {
+    console.error('[BOOKING ERROR]', e);
+    errEl.textContent = 'Ошибка соединения';
+    errEl.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = 'Подтвердить бронь';
   }
 }
 
