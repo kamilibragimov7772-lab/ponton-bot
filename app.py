@@ -7,6 +7,7 @@ import uuid
 import base64
 import urllib.request
 import urllib.error
+from datetime import datetime
 
 from flask import Flask, request, jsonify, send_from_directory
 from telegram import (
@@ -47,6 +48,21 @@ def set_state(cid, step, data=None):
 
 def clear_state(cid):
     user_states.pop(cid, None)
+
+# ─── VALIDATION ───────────────────────────────────────────────────────────────
+def validate_date_str(date_text: str) -> bool:
+    try:
+        datetime.strptime(date_text, "%Y.%m.%d")
+        return True
+    except ValueError:
+        return False
+
+def validate_time_str(time_text: str) -> bool:
+    try:
+        datetime.strptime(time_text, "%H:%M")
+        return True
+    except ValueError:
+        return False
 
 # ─── KEYBOARDS ────────────────────────────────────────────────────────────────
 def admin_main_kb():
@@ -237,9 +253,6 @@ async def send_all_admins(text, reply_markup=None):
         await safe_send_message(bot, aid, text, reply_markup=reply_markup)
 
 def notify_purchase_sync(session, booking):
-    """
-    Вызывается только после успешной оплаты.
-    """
     bot = Bot(token=BOT_TOKEN)
     seats_str = booking["seats"]
 
@@ -422,7 +435,7 @@ async def handle_callback(bot, cb):
 
         prompts = {
             "movie": "Введите новое название фильма:",
-            "date": "Введите новую дату (формат: 2026-03-15):",
+            "date": "Введите новую дату (формат: 2026.03.15):",
             "time": "Введите новое время (формат: 20:00):",
             "price": "Введите новую цену (число, рублей):",
             "seats": "Введите новое количество мест:",
@@ -578,14 +591,22 @@ async def handle_admin_input(bot, cid, text, state):
 
     if step == "add_movie":
         set_state(cid, "add_date", {"movie": text})
-        await safe_send_message(bot, cid, "📅 Дата сеанса (формат: 2026-03-15):")
+        await safe_send_message(bot, cid, "📅 Дата сеанса (формат: 2026.03.15):")
 
     elif step == "add_date":
+        if not validate_date_str(text):
+            await safe_send_message(bot, cid, "❌ Неверная дата. Введите в формате: 2026.03.15")
+            return
+
         data["date"] = text
         set_state(cid, "add_time", data)
         await safe_send_message(bot, cid, "🕐 Время сеанса (формат: 20:00):")
 
     elif step == "add_time":
+        if not validate_time_str(text):
+            await safe_send_message(bot, cid, "❌ Неверное время. Введите в формате: 20:00")
+            return
+
         data["time"] = text
         set_state(cid, "add_price", data)
         await safe_send_message(bot, cid, "💰 Цена билета (только число, рублей):")
@@ -631,6 +652,16 @@ async def handle_admin_input(bot, cid, text, state):
         field = step.replace("edit_", "")
         sid = data["sid"]
         val = text
+
+        if field == "date":
+            if not validate_date_str(text):
+                await safe_send_message(bot, cid, "❌ Неверная дата. Формат: 2026.03.15")
+                return
+
+        if field == "time":
+            if not validate_time_str(text):
+                await safe_send_message(bot, cid, "❌ Неверное время. Формат: 20:00")
+                return
 
         if field in ["price", "seats"]:
             try:
@@ -740,8 +771,6 @@ def api_create_payment():
 
         price = session["price"] * len(seats)
 
-        # Технически создаем pending-запись ДО оплаты,
-        # но никому ничего не отправляем.
         bid = db.create_booking(sid, tg_id, username, first_name, last_name, phone, seats, price)
         if bid is None:
             return jsonify({"ok": False, "error": "Одно из мест уже занято"}), 409
@@ -778,13 +807,6 @@ def api_create_payment():
 
 @app.route("/api/yookassa/webhook", methods=["POST"])
 def yookassa_webhook():
-    """
-    В кабинете ЮKassa укажи URL:
-    https://ТВОЙ-ДОМЕН/api/yookassa/webhook
-
-    И подпишись хотя бы на событие:
-    payment.succeeded
-    """
     try:
         payload = request.get_json(force=True, silent=False)
         print(f"[YOOKASSA WEBHOOK] payload={payload}")
