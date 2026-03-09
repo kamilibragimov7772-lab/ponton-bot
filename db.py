@@ -19,7 +19,6 @@ def parse_admin_ids():
             if part.isdigit():
                 ids.append(int(part))
 
-    # запасной вариант, если переменная не задана
     if not ids:
         ids = [319637013, 327659980]
 
@@ -115,7 +114,7 @@ def get_sessions(active_only=False):
     q = "SELECT * FROM sessions"
     if active_only:
         q += " WHERE is_active=1"
-    q += " ORDER BY date, time"
+    q += " ORDER BY date ASC, time ASC"
     r = db.execute(q).fetchall()
     db.close()
     return [dict(row) for row in r]
@@ -223,9 +222,10 @@ def get_sessions_starting_in(minutes_from=55, minutes_to=65):
     r = db.execute("""
         SELECT * FROM sessions
         WHERE is_active=1
-        AND datetime(date || ' ' || time) BETWEEN
+        AND datetime(replace(date, '.', '-') || ' ' || time) BETWEEN
             datetime('now', 'localtime', '+' || ? || ' minutes') AND
             datetime('now', 'localtime', '+' || ? || ' minutes')
+        ORDER BY date ASC, time ASC
     """, (minutes_from, minutes_to)).fetchall()
     db.close()
     return [dict(row) for row in r]
