@@ -3,20 +3,36 @@ import json
 import asyncio
 import threading
 import time as time_module
+import uuid
+import base64
+import urllib.request
+import urllib.error
+
 from flask import Flask, request, jsonify, send_from_directory
 from telegram import (
     Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup,
     WebAppInfo
 )
+
 import db
 
 app = Flask(__name__, static_folder="static")
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-WEBAPP_URL = os.environ.get("WEBAPP_URL", "https://ponton-bot-production.up.railway.app").strip()
+WEBAPP_URL = os.environ.get("WEBAPP_URL", "https://web-production-9490d.up.railway.app").strip()
+
+YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "").strip()
+YOOKASSA_SECRET_KEY = os.environ.get("YOOKASSA_SECRET_KEY", "").strip()
+YOOKASSA_RETURN_URL = os.environ.get(
+    "YOOKASSA_RETURN_URL",
+    f"{WEBAPP_URL}?payment=success"
+).strip()
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set")
+
+if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+    print("[WARN] YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY are not set")
 
 db.init_db()
 
@@ -37,7 +53,7 @@ def admin_main_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить сеанс", callback_data="add_session")],
         [InlineKeyboardButton("📋 Список сеансов", callback_data="list_sessions")],
-        [InlineKeyboardButton("🎫 Все брони", callback_data="all_bookings")],
+        [InlineKeyboardButton("🎫 Все покупки", callback_data="all_bookings")],
     ])
 
 def back_kb(callback="admin_main"):
@@ -53,15 +69,14 @@ def session_manage_kb(sid, is_active):
          InlineKeyboardButton("💰 Цена", callback_data=f"edit_price_{sid}")],
         [InlineKeyboardButton("💺 Мест", callback_data=f"edit_seats_{sid}"),
          InlineKeyboardButton(toggle, callback_data=toggle_cb)],
-        [InlineKeyboardButton("📋 Брони сеанса", callback_data=f"session_bookings_{sid}")],
+        [InlineKeyboardButton("📋 Покупки сеанса", callback_data=f"session_bookings_{sid}")],
         [InlineKeyboardButton("🗑 Удалить сеанс", callback_data=f"delete_confirm_{sid}")],
         [InlineKeyboardButton("◀️ Назад", callback_data="list_sessions")],
     ])
 
 def booking_manage_kb(bid):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Подтвердить оплату", callback_data=f"confirm_pay_{bid}")],
-        [InlineKeyboardButton("❌ Отменить бронь", callback_data=f"cancel_booking_{bid}")],
+        [InlineKeyboardButton("❌ Отменить запись", callback_data=f"cancel_booking_{bid}")],
         [InlineKeyboardButton("◀️ Назад", callback_data="all_bookings")],
     ])
 
@@ -82,7 +97,7 @@ def booking_text(b, show_session=True):
         "paid": "✅ Оплачено",
         "cancelled": "❌ Отменено"
     }
-    txt = f"🎫 Бронь #{b['id']}\n"
+    txt = f"🎫 Заказ #{b['id']}\n"
     if show_session:
         txt += f"🎬 {b.get('movie', '')} {b.get('date', '')} {b.get('time', '')}\n"
     txt += (
@@ -93,6 +108,79 @@ def booking_text(b, show_session=True):
         f"Статус: {status_map.get(b['status'], b['status'])}"
     )
     return txt
+
+def _yookassa_headers():
+    auth = base64.b64encode(f"{YOOKASSA_SHOP_ID}:{YOOKASSA_SECRET_KEY}".encode()).decode()
+    return {
+        "Authorization": f"Basic {auth}",
+        "Content-Type": "application/json",
+        "Idempotence-Key": str(uuid.uuid4())
+    }
+
+def create_yookassa_payment(amount_rub, description, booking_id, user_payload):
+    """
+    Создает платеж в ЮKassa и возвращает dict:
+    {
+      "payment_id": "...",
+      "payment_url": "https://...",
+      "raw": {...}
+    }
+    """
+    if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+        raise RuntimeError("YOOKASSA_SHOP_ID or YOOKASSA_SECRET_KEY is not set")
+
+    payload = {
+        "amount": {
+            "value": f"{float(amount_rub):.2f}",
+            "currency": "RUB"
+        },
+        "capture": True,
+        "confirmation": {
+            "type": "redirect",
+            "return_url": YOOKASSA_RETURN_URL
+        },
+        "description": description,
+        "metadata": {
+            "booking_id": str(booking_id),
+            "telegram_id": str(user_payload.get("telegram_id") or ""),
+            "username": user_payload.get("username", ""),
+            "phone": user_payload.get("phone", ""),
+            "first_name": user_payload.get("first_name", ""),
+            "last_name": user_payload.get("last_name", "")
+        }
+    }
+
+    req = urllib.request.Request(
+        url="https://api.yookassa.ru/v3/payments",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=_yookassa_headers(),
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8")
+            data = json.loads(body)
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="ignore")
+        print(f"[YOOKASSA CREATE ERROR] status={e.code} body={err_body}")
+        raise RuntimeError(f"ЮKassa error: {err_body}")
+    except Exception as e:
+        print(f"[YOOKASSA CREATE ERROR] {e}")
+        raise
+
+    payment_id = data.get("id")
+    payment_url = (data.get("confirmation") or {}).get("confirmation_url")
+
+    if not payment_id or not payment_url:
+        print(f"[YOOKASSA CREATE BAD RESPONSE] {data}")
+        raise RuntimeError("ЮKassa не вернула ссылку на оплату")
+
+    return {
+        "payment_id": payment_id,
+        "payment_url": payment_url,
+        "raw": data
+    }
 
 async def safe_send_message(bot, chat_id, text, reply_markup=None):
     try:
@@ -115,6 +203,36 @@ async def send_all_admins(text, reply_markup=None):
     for aid in admin_ids:
         await safe_send_message(bot, aid, text, reply_markup=reply_markup)
 
+def notify_purchase_sync(session, booking):
+    """
+    Вызывается только после успешной оплаты.
+    """
+    bot = Bot(token=BOT_TOKEN)
+    seats_str = booking["seats"]
+
+    if booking.get("telegram_id"):
+        client_text = (
+            f"✅ Билеты куплены!\n\n"
+            f"🎬 {session['movie']}\n"
+            f"📅 {session['date']} в {session['time']}\n"
+            f"💺 Места: {seats_str}\n"
+            f"💰 Сумма: {booking['total_price']} ₽\n"
+            f"🎟 Статус: оплачено\n\n"
+            f"До встречи на Понтоне! 🌊"
+        )
+        asyncio.run(safe_send_message(bot, booking["telegram_id"], client_text))
+
+    admin_text = (
+        f"💰 Куплены билеты\n\n"
+        f"🎬 {session['movie']} — {session['date']} {session['time']}\n"
+        f"👤 {booking['first_name']} {booking['last_name']}\n"
+        f"📱 {booking['phone']}\n"
+        f"💺 Места: {seats_str}\n"
+        f"💰 {booking['total_price']} ₽\n"
+        f"🆔 Заказ #{booking['id']}"
+    )
+    asyncio.run(send_all_admins(admin_text))
+
 # ─── BOT HANDLERS ─────────────────────────────────────────────────────────────
 async def handle_message(update_data):
     bot = Bot(token=BOT_TOKEN)
@@ -122,7 +240,6 @@ async def handle_message(update_data):
 
     print(f"[WEBHOOK UPDATE] keys={list(update_data.keys()) if isinstance(update_data, dict) else 'unknown'}")
 
-    # Callback query
     if upd.callback_query:
         print(f"[CALLBACK] from={upd.callback_query.from_user.id} data={upd.callback_query.data}")
         await handle_callback(bot, upd.callback_query)
@@ -140,7 +257,6 @@ async def handle_message(update_data):
 
     print(f"[MESSAGE] chat_id={cid} text={text!r} is_admin={is_admin} has_web_app_data={bool(msg.web_app_data)}")
 
-    # /start
     if text == "/start":
         clear_state(cid)
         if is_admin:
@@ -157,87 +273,24 @@ async def handle_message(update_data):
             await safe_send_message(
                 bot,
                 cid,
-                "🎬 Понтон — кино на воде\n\nНажми кнопку, чтобы выбрать места и забронировать.",
+                "🎬 Понтон — кино на воде\n\nНажми кнопку, чтобы выбрать места и купить билеты.",
                 reply_markup=kb
             )
         return
 
-    # Web App data
     if msg.web_app_data:
-        await handle_webapp_data(bot, msg)
+        await safe_send_message(bot, cid, "Открой кассу и оформи покупку через приложение.")
         return
 
-    # Admin state machine
     if is_admin and state["step"]:
         await handle_admin_input(bot, cid, text, state)
         return
 
-    # Default
     if not is_admin:
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🎬 Открыть кассу", web_app=WebAppInfo(url=WEBAPP_URL))
         ]])
         await safe_send_message(bot, cid, "Нажми кнопку, чтобы открыть кассу:", reply_markup=kb)
-
-async def handle_webapp_data(bot, msg):
-    cid = msg.chat_id
-    try:
-        data = json.loads(msg.web_app_data.data)
-        print(f"[WEBAPP DATA] chat_id={cid} data={data}")
-
-        sid = data["session_id"]
-        seats = data["seats"]
-        first_name = data["first_name"]
-        last_name = data["last_name"]
-        phone = data["phone"]
-        tg_id = data.get("telegram_id", cid)
-        username = data.get("username", "")
-
-        session = db.get_session(sid)
-        if not session:
-            await safe_send_message(bot, cid, "❌ Сеанс не найден.")
-            return
-
-        price = session["price"] * len(seats)
-        bid = db.create_booking(sid, tg_id, username, first_name, last_name, phone, seats, price)
-
-        if bid is None:
-            await safe_send_message(bot, cid, "❌ Одно из выбранных мест уже занято. Попробуйте снова.")
-            return
-
-        seats_str = ", ".join(str(s) for s in seats)
-
-        # Notify client
-        await safe_send_message(
-            bot,
-            cid,
-            f"✅ Бронь создана!\n\n"
-            f"🎬 {session['movie']}\n"
-            f"📅 {session['date']} в {session['time']}\n"
-            f"💺 Места: {seats_str}\n"
-            f"💰 Сумма: {price} ₽\n"
-            f"⏳ Статус: ожидает подтверждения оплаты\n\n"
-            f"Мы свяжемся с вами для подтверждения."
-        )
-
-        # Notify admins
-        admin_text = (
-            f"🔔 Новая бронь #{bid}\n\n"
-            f"🎬 {session['movie']} — {session['date']} {session['time']}\n"
-            f"👤 {first_name} {last_name}\n"
-            f"📱 {phone}\n"
-            f"💺 Места: {seats_str}\n"
-            f"💰 {price} ₽"
-        )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Подтвердить оплату", callback_data=f"confirm_pay_{bid}"),
-            InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_booking_{bid}")
-        ]])
-        await send_all_admins(admin_text, kb)
-
-    except Exception as e:
-        print(f"[WEBAPP ERROR] chat_id={cid} error={e}")
-        await safe_send_message(bot, cid, "❌ Ошибка при создании брони.")
 
 async def handle_callback(bot, cb):
     cid = cb.message.chat_id
@@ -253,7 +306,6 @@ async def handle_callback(bot, cb):
         await safe_send_message(bot, cid, "❌ Эта команда доступна только администратору.")
         return
 
-    # ── Admin main ──
     if data == "admin_main":
         await bot.edit_message_text(
             "Выбери действие:",
@@ -354,7 +406,7 @@ async def handle_callback(bot, cb):
     elif data.startswith("delete_confirm_"):
         sid = int(data.split("_")[-1])
         await bot.edit_message_text(
-            "⚠️ Вы уверены, что хотите удалить сеанс? Все брони тоже будут удалены.",
+            "⚠️ Вы уверены, что хотите удалить сеанс? Все покупки тоже будут удалены.",
             cid,
             msg_id,
             reply_markup=InlineKeyboardMarkup([
@@ -377,7 +429,7 @@ async def handle_callback(bot, cb):
         bookings = db.get_all_bookings()
         if not bookings:
             await bot.edit_message_text(
-                "Броней нет.",
+                "Покупок нет.",
                 cid,
                 msg_id,
                 reply_markup=back_kb("admin_main")
@@ -395,7 +447,7 @@ async def handle_callback(bot, cb):
         buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_main")])
 
         await bot.edit_message_text(
-            "🎫 Все брони:",
+            "🎫 Все заказы:",
             cid,
             msg_id,
             reply_markup=InlineKeyboardMarkup(buttons)
@@ -412,7 +464,7 @@ async def handle_callback(bot, cb):
 
         if not bookings:
             await bot.edit_message_text(
-                f"На сеанс «{s['movie']}» броней нет.",
+                f"На сеанс «{s['movie']}» заказов нет.",
                 cid,
                 msg_id,
                 reply_markup=back_kb(f"manage_session_{sid}")
@@ -430,7 +482,7 @@ async def handle_callback(bot, cb):
         buttons.append([InlineKeyboardButton("◀️ Назад", callback_data=f"manage_session_{sid}")])
 
         await bot.edit_message_text(
-            f"Брони на «{s['movie']}»:",
+            f"Заказы на «{s['movie']}»:",
             cid,
             msg_id,
             reply_markup=InlineKeyboardMarkup(buttons)
@@ -440,7 +492,7 @@ async def handle_callback(bot, cb):
         bid = int(data.split("_")[-1])
         b = db.get_booking(bid)
         if not b:
-            await bot.edit_message_text("Бронь не найдена.", cid, msg_id)
+            await bot.edit_message_text("Заказ не найден.", cid, msg_id)
             return
 
         s = db.get_session(b["session_id"])
@@ -455,40 +507,11 @@ async def handle_callback(bot, cb):
             reply_markup=booking_manage_kb(bid)
         )
 
-    elif data.startswith("confirm_pay_"):
-        bid = int(data.split("_")[-1])
-        b = db.get_booking(bid)
-        if not b:
-            await cb.answer("Бронь не найдена", show_alert=True)
-            return
-
-        db.update_booking_status(bid, "paid")
-        s = db.get_session(b["session_id"])
-
-        if b["telegram_id"]:
-            client_text = (
-                f"🎉 Оплата подтверждена!\n\n"
-                f"🎬 {s['movie']}\n"
-                f"📅 {s['date']} в {s['time']}\n"
-                f"💺 Места: {b['seats']}\n"
-                f"💰 {b['total_price']} ₽\n"
-                f"✅ Статус: Куплено\n\n"
-                f"Ждём вас на Понтоне! 🌊"
-            )
-            await safe_send_message(bot, b["telegram_id"], client_text)
-
-        await bot.edit_message_text(
-            f"✅ Оплата подтверждена для брони #{bid}\n{b['first_name']} {b['last_name']}",
-            cid,
-            msg_id,
-            reply_markup=back_kb("all_bookings")
-        )
-
     elif data.startswith("cancel_booking_"):
         bid = int(data.split("_")[-1])
         b = db.get_booking(bid)
         if not b:
-            await cb.answer("Бронь не найдена", show_alert=True)
+            await cb.answer("Заказ не найден", show_alert=True)
             return
 
         db.update_booking_status(bid, "cancelled")
@@ -496,7 +519,7 @@ async def handle_callback(bot, cb):
 
         if b["telegram_id"]:
             client_text = (
-                f"❌ Бронь отменена\n\n"
+                f"❌ Заказ отменён\n\n"
                 f"🎬 {s['movie']}\n"
                 f"📅 {s['date']} в {s['time']}\n"
                 f"💺 Места: {b['seats']}\n\n"
@@ -505,7 +528,7 @@ async def handle_callback(bot, cb):
             await safe_send_message(bot, b["telegram_id"], client_text)
 
         await bot.edit_message_text(
-            f"❌ Бронь #{bid} отменена.",
+            f"❌ Заказ #{bid} отменён.",
             cid,
             msg_id,
             reply_markup=back_kb("all_bookings")
@@ -633,7 +656,6 @@ async def send_session_summary(s):
     text = "\n".join(lines)
     await send_all_admins(text)
 
-# Start scheduler thread
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
 scheduler_thread.start()
 
@@ -662,11 +684,11 @@ def api_seats(session_id):
 def index():
     return send_from_directory("static", "index.html")
 
-@app.route("/api/book", methods=["POST"])
-def api_book():
+@app.route("/api/create-payment", methods=["POST"])
+def api_create_payment():
     try:
         data = request.get_json(force=True, silent=False)
-        print(f"[API BOOK] incoming={data}")
+        print(f"[API CREATE PAYMENT] incoming={data}")
 
         sid = data.get("session_id")
         seats = data.get("seats", [])
@@ -684,48 +706,93 @@ def api_book():
             return jsonify({"ok": False, "error": "Сеанс не найден"}), 404
 
         price = session["price"] * len(seats)
-        bid = db.create_booking(sid, tg_id, username, first_name, last_name, phone, seats, price)
 
+        # Технически создаем pending-запись ДО оплаты,
+        # но никому ничего не отправляем.
+        bid = db.create_booking(sid, tg_id, username, first_name, last_name, phone, seats, price)
         if bid is None:
             return jsonify({"ok": False, "error": "Одно из мест уже занято"}), 409
 
         seats_str = ", ".join(str(s) for s in seats)
+        description = f"{session['movie']} {session['date']} {session['time']} | места: {seats_str}"
 
-        # Notify user if telegram_id exists
-        if tg_id:
-            user_text = (
-                f"✅ Бронь создана!\n\n"
-                f"🎬 {session['movie']}\n"
-                f"📅 {session['date']} в {session['time']}\n"
-                f"💺 Места: {seats_str}\n"
-                f"💰 Сумма: {price} ₽\n"
-                f"⏳ Статус: ожидает подтверждения оплаты\n\n"
-                f"Мы свяжемся с вами для подтверждения."
-            )
-            asyncio.run(safe_send_message(Bot(token=BOT_TOKEN), tg_id, user_text))
-        else:
-            print("[API BOOK] telegram_id is empty, user notification skipped")
-
-        admin_text = (
-            f"🔔 Новая бронь #{bid}\n\n"
-            f"🎬 {session['movie']} — {session['date']} {session['time']}\n"
-            f"👤 {first_name} {last_name}\n"
-            f"📱 {phone}\n"
-            f"💺 Места: {seats_str}\n"
-            f"💰 {price} ₽"
+        payment = create_yookassa_payment(
+            amount_rub=price,
+            description=description,
+            booking_id=bid,
+            user_payload={
+                "telegram_id": tg_id,
+                "username": username,
+                "phone": phone,
+                "first_name": first_name,
+                "last_name": last_name
+            }
         )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Подтвердить оплату", callback_data=f"confirm_pay_{bid}"),
-            InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_booking_{bid}")
-        ]])
 
-        asyncio.run(send_all_admins(admin_text, kb))
+        print(f"[API CREATE PAYMENT] booking_id={bid} payment_id={payment['payment_id']}")
 
-        return jsonify({"ok": True, "booking_id": bid, "total": price})
+        return jsonify({
+            "ok": True,
+            "booking_id": bid,
+            "payment_id": payment["payment_id"],
+            "payment_url": payment["payment_url"],
+            "total": price
+        })
 
     except Exception as e:
-        print(f"[API BOOK ERROR] {e}")
-        return jsonify({"ok": False, "error": "Внутренняя ошибка сервера"}), 500
+        print(f"[API CREATE PAYMENT ERROR] {e}")
+        return jsonify({"ok": False, "error": "Не удалось создать оплату"}), 500
+
+@app.route("/api/yookassa/webhook", methods=["POST"])
+def yookassa_webhook():
+    """
+    В кабинете ЮKassa укажи URL:
+    https://ТВОЙ-ДОМЕН/api/yookassa/webhook
+
+    И подпишись хотя бы на событие:
+    payment.succeeded
+    """
+    try:
+        payload = request.get_json(force=True, silent=False)
+        print(f"[YOOKASSA WEBHOOK] payload={payload}")
+
+        event = payload.get("event")
+        obj = payload.get("object", {}) or {}
+
+        if event != "payment.succeeded":
+            return "ok", 200
+
+        metadata = obj.get("metadata", {}) or {}
+        booking_id_raw = metadata.get("booking_id")
+
+        if not booking_id_raw:
+            print("[YOOKASSA WEBHOOK] booking_id missing in metadata")
+            return "ok", 200
+
+        bid = int(booking_id_raw)
+        booking = db.get_booking(bid)
+        if not booking:
+            print(f"[YOOKASSA WEBHOOK] booking not found: {bid}")
+            return "ok", 200
+
+        if booking["status"] == "paid":
+            print(f"[YOOKASSA WEBHOOK] already paid: {bid}")
+            return "ok", 200
+
+        db.update_booking_status(bid, "paid")
+        booking = db.get_booking(bid)
+        session = db.get_session(booking["session_id"])
+
+        if not session:
+            print(f"[YOOKASSA WEBHOOK] session not found for booking {bid}")
+            return "ok", 200
+
+        notify_purchase_sync(session, booking)
+        return "ok", 200
+
+    except Exception as e:
+        print(f"[YOOKASSA WEBHOOK ERROR] {e}")
+        return "error", 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
