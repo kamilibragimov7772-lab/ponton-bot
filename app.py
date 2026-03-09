@@ -117,6 +117,15 @@ def _yookassa_headers():
         "Idempotence-Key": str(uuid.uuid4())
     }
 
+def normalize_phone(raw_phone: str) -> str:
+    raw_phone = raw_phone or ""
+    clean_phone = "".join(ch for ch in raw_phone if ch.isdigit() or ch == "+")
+    if clean_phone.startswith("8"):
+        clean_phone = "+7" + clean_phone[1:]
+    elif clean_phone.startswith("7"):
+        clean_phone = "+" + clean_phone
+    return clean_phone
+
 def create_yookassa_payment(amount_rub, description, booking_id, user_payload):
     """
     Создает платеж в ЮKassa и возвращает dict:
@@ -129,6 +138,8 @@ def create_yookassa_payment(amount_rub, description, booking_id, user_payload):
     if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
         raise RuntimeError("YOOKASSA_SHOP_ID or YOOKASSA_SECRET_KEY is not set")
 
+    clean_phone = normalize_phone(user_payload.get("phone", ""))
+
     payload = {
         "amount": {
             "value": f"{float(amount_rub):.2f}",
@@ -140,11 +151,30 @@ def create_yookassa_payment(amount_rub, description, booking_id, user_payload):
             "return_url": YOOKASSA_RETURN_URL
         },
         "description": description,
+        "receipt": {
+            "customer": {
+                "full_name": f"{user_payload.get('first_name', '')} {user_payload.get('last_name', '')}".strip(),
+                "phone": clean_phone
+            },
+            "items": [
+                {
+                    "description": description[:128],
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{float(amount_rub):.2f}",
+                        "currency": "RUB"
+                    },
+                    "vat_code": 1,
+                    "payment_mode": "full_payment",
+                    "payment_subject": "service"
+                }
+            ]
+        },
         "metadata": {
             "booking_id": str(booking_id),
             "telegram_id": str(user_payload.get("telegram_id") or ""),
             "username": user_payload.get("username", ""),
-            "phone": user_payload.get("phone", ""),
+            "phone": clean_phone,
             "first_name": user_payload.get("first_name", ""),
             "last_name": user_payload.get("last_name", "")
         }
