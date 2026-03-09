@@ -1,5 +1,434 @@
 <!DOCTYPE html>
+<<!DOCTYPE html>
 <html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Понтон — Касса</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --orange:#E8400A;
+  --orange-dim:rgba(232,64,10,0.12);
+  --dark:#0e0e0e;
+  --dark2:#171717;
+  --dark3:#222;
+  --dark4:#2a2a2a;
+  --border:#333;
+  --muted:#777;
+  --text:#fff;
+}
+html,body{height:100%;background:var(--dark);color:var(--text);font-family:'Inter',sans-serif;-webkit-tap-highlight-color:transparent;}
+body{padding:0 0 80px;overflow-x:hidden;}
+
+.topbar{display:flex;align-items:center;gap:10px;padding:16px 16px 0;}
+.back-btn{
+  background:none;
+  border:none;
+  color:var(--orange);
+  font-size:16px;
+  cursor:pointer;
+  padding:4px 8px;
+  display:none;
+  font-family:'Oswald',sans-serif;
+  letter-spacing:1px;
+  text-transform:uppercase;
+}
+.logo-text{font-family:'Oswald',sans-serif;font-size:12px;letter-spacing:4px;color:var(--orange);text-transform:uppercase;}
+.page-title{font-family:'Oswald',sans-serif;font-size:24px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:8px 16px 16px;}
+
+.step{display:none;padding:0 16px;}
+.step.active{display:block;}
+
+.session-card{
+  background:var(--dark2);border:1.5px solid var(--border);
+  border-radius:12px;padding:16px;margin-bottom:10px;
+  cursor:pointer;transition:all 0.15s;
+}
+.session-card:active{transform:scale(0.98);}
+.session-card.selected{border-color:var(--orange);background:var(--orange-dim);}
+.session-movie{font-family:'Oswald',sans-serif;font-size:18px;font-weight:600;margin-bottom:4px;}
+.session-info{font-size:13px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+.session-price{font-family:'Oswald',sans-serif;font-size:16px;color:var(--orange);}
+
+.screen-wrap{text-align:center;margin-bottom:14px;}
+.screen{width:55%;margin:0 auto 5px;height:4px;background:linear-gradient(90deg,transparent,var(--orange),transparent);border-radius:50%;filter:blur(2px);}
+.screen-lbl{font-size:10px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;}
+.seat-map{display:flex;flex-direction:column;gap:7px;align-items:center;margin-bottom:14px;}
+.row{display:flex;align-items:center;gap:5px;}
+.row-lbl{font-family:'Oswald',sans-serif;font-size:10px;color:var(--muted);width:14px;text-align:center;flex-shrink:0;}
+.seat{
+  width:clamp(30px,8vw,42px);height:clamp(27px,7vw,38px);
+  border-radius:5px 5px 3px 3px;border:1.5px solid #383838;
+  background:#1e1e1e;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-size:10px;color:#555;font-family:'Oswald',sans-serif;
+  transition:all 0.12s;position:relative;
+}
+.seat::after{content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:55%;height:3px;background:#383838;border-radius:0 0 2px 2px;}
+.seat.selected{border-color:var(--orange);background:var(--orange);color:#fff;box-shadow:0 3px 10px rgba(232,64,10,0.35);}
+.seat.selected::after{background:rgba(232,64,10,0.5);}
+.seat.taken{border-color:#1e1e1e;background:#141414;cursor:not-allowed;opacity:0.3;}
+.legend{display:flex;gap:14px;justify-content:center;margin-bottom:14px;flex-wrap:wrap;}
+.li{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);}
+.ls{width:14px;height:12px;border-radius:3px;border:1.5px solid;}
+.ls.f{border-color:#383838;background:#1e1e1e;}
+.ls.s{border-color:var(--orange);background:var(--orange);}
+.ls.t{border-color:#1e1e1e;background:#141414;opacity:.3;}
+.sel-bar{background:var(--dark2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+.sel-lbl{font-size:11px;color:var(--muted);}
+.sel-val{font-family:'Oswald',sans-serif;font-size:17px;color:var(--orange);}
+
+.form-section{margin-bottom:16px;}
+.form-lbl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;display:block;}
+input{
+  width:100%;background:var(--dark3);border:1px solid var(--border);
+  border-radius:8px;padding:13px 14px;color:var(--text);
+  font-size:15px;font-family:'Inter',sans-serif;outline:none;
+  transition:border-color 0.2s;-webkit-appearance:none;
+}
+input:focus{border-color:var(--orange);}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.info-box{background:var(--dark2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;gap:10px;}
+.info-key{font-size:12px;color:var(--muted);}
+.info-val{font-family:'Oswald',sans-serif;font-size:14px;color:var(--text);text-align:right;}
+.info-val.orange{color:var(--orange);}
+
+.bottom{position:fixed;bottom:0;left:0;right:0;padding:10px 16px 16px;background:linear-gradient(transparent,var(--dark) 25%);}
+.btn{width:100%;padding:15px;background:var(--orange);color:#fff;border:none;border-radius:50px;font-family:'Oswald',sans-serif;font-size:16px;font-weight:600;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:all 0.15s;}
+.btn:disabled{opacity:.35;cursor:not-allowed;}
+.btn:active:not(:disabled){transform:scale(0.98);}
+.btn.secondary{background:var(--dark3);color:var(--text);}
+
+.success{text-align:center;padding:40px 20px;}
+.success-icon{font-size:60px;margin-bottom:16px;}
+.success h2{font-family:'Oswald',sans-serif;font-size:28px;text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;}
+.success p{color:var(--muted);font-size:14px;line-height:1.7;}
+
+.err{background:rgba(232,64,10,.1);border:1px solid var(--orange);border-radius:8px;padding:11px 13px;font-size:13px;color:var(--orange);margin-bottom:12px;display:none;}
+.err.show{display:block;}
+.empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:14px;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="back-btn" id="backBtn" onclick="goBack()">Назад</button>
+  <div class="logo-text">PONTON.AST</div>
+</div>
+<div class="page-title" id="pageTitle">Выбор сеанса</div>
+
+<div class="step active" id="step1">
+  <div id="sessionList"><div class="empty">Загрузка...</div></div>
+</div>
+
+<div class="step" id="step2">
+  <div id="sessionHeader" style="background:var(--dark2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:var(--muted);"></div>
+  <div class="screen-wrap"><div class="screen"></div><div class="screen-lbl">Экран</div></div>
+  <div class="seat-map" id="seatMap"><div class="empty">Загрузка...</div></div>
+  <div class="legend">
+    <div class="li"><div class="ls f"></div>Свободно</div>
+    <div class="li"><div class="ls s"></div>Выбрано</div>
+    <div class="li"><div class="ls t"></div>Занято</div>
+  </div>
+  <div class="sel-bar">
+    <div><div class="sel-lbl">Мест выбрано</div><div class="sel-val" id="selCount">0</div></div>
+    <div style="text-align:right"><div class="sel-lbl">К оплате</div><div class="sel-val" id="selTotal">0 ₽</div></div>
+  </div>
+</div>
+
+<div class="step" id="step3">
+  <div class="err" id="formErr"></div>
+  <div class="info-box" id="bookSummary"></div>
+  <div class="row2">
+    <div class="form-section">
+      <label class="form-lbl">Имя</label>
+      <input type="text" id="firstName" placeholder="Иван" autocomplete="given-name"/>
+    </div>
+    <div class="form-section">
+      <label class="form-lbl">Фамилия</label>
+      <input type="text" id="lastName" placeholder="Иванов" autocomplete="family-name"/>
+    </div>
+  </div>
+  <div class="form-section">
+    <label class="form-lbl">Телефон / WhatsApp</label>
+    <input type="tel" id="phone" placeholder="+7 999 000 00 00" autocomplete="tel"/>
+  </div>
+</div>
+
+<div class="step" id="stepSuccess">
+  <div class="success">
+    <div class="success-icon">🎟️</div>
+    <h2>Оплата успешна!</h2>
+    <p>Ваши билеты куплены.<br>До встречи на сеансе.<br><br>
+    <span style="color:var(--orange)">Ponton.ast</span></p>
+  </div>
+</div>
+
+<div class="bottom">
+  <button class="btn" id="mainBtn" disabled onclick="nextStep()">Выбрать места →</button>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.expand();
+  try { tg.setHeaderColor('#0e0e0e'); } catch(e) {}
+}
+
+const ROWS = ['A','B','C','D','E','F'];
+let sessions = [];
+let selectedSession = null;
+let takenSeats = [];
+let selectedSeats = [];
+let currentStep = 1;
+
+const steps = {
+  1:{title:'Выбор сеанса', btn:'Выбрать места →', back:null},
+  2:{title:'Выбор мест', btn:'Продолжить →', back:1},
+  3:{title:'Ваши данные', btn:'Оплатить', back:2},
+  success:{title:'Билеты куплены', btn:'', back:null}
+};
+
+function showStep(n){
+  currentStep = n;
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  const el = n === 'success' ? document.getElementById('stepSuccess') : document.getElementById('step' + n);
+  if (el) el.classList.add('active');
+
+  const cfg = steps[n] || {};
+  document.getElementById('pageTitle').textContent = cfg.title || '';
+
+  const btn = document.getElementById('mainBtn');
+  btn.textContent = cfg.btn || '';
+  btn.style.display = cfg.btn ? '' : 'none';
+  btn.disabled = true;
+
+  const backBtn = document.getElementById('backBtn');
+  backBtn.style.display = cfg.back ? '' : 'none';
+
+  updateBtn();
+}
+
+function goBack(){
+  const cfg = steps[currentStep];
+  if (cfg && cfg.back) showStep(cfg.back);
+}
+
+function updateBtn(){
+  const btn = document.getElementById('mainBtn');
+  if (currentStep === 1) btn.disabled = !selectedSession;
+  else if (currentStep === 2) btn.disabled = selectedSeats.length === 0;
+  else if (currentStep === 3) btn.disabled = false;
+}
+
+function nextStep(){
+  if (currentStep === 1) goToSeats();
+  else if (currentStep === 2) goToForm();
+  else if (currentStep === 3) submitPayment();
+}
+
+async function loadSessions(){
+  try {
+    const r = await fetch('/api/sessions');
+    sessions = await r.json();
+    renderSessions();
+  } catch(e) {
+    document.getElementById('sessionList').innerHTML = '<div class="empty">Ошибка загрузки. Попробуйте позже.</div>';
+  }
+}
+
+function renderSessions(){
+  const el = document.getElementById('sessionList');
+  if (!sessions.length) {
+    el.innerHTML = '<div class="empty">Нет активных сеансов</div>';
+    return;
+  }
+
+  el.innerHTML = sessions.map(s => `
+    <div class="session-card" id="sc_${s.id}" onclick="selectSession(${s.id})">
+      <div class="session-movie">${s.movie}</div>
+      <div class="session-info">
+        <span>📅 ${s.date}</span>
+        <span>🕐 ${s.time}</span>
+        <span>💺 ${s.total_seats} мест</span>
+      </div>
+      <div class="session-price">${s.price} ₽ / место</div>
+    </div>
+  `).join('');
+}
+
+function selectSession(id){
+  selectedSession = sessions.find(s => s.id === id);
+  document.querySelectorAll('.session-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById('sc_' + id).classList.add('selected');
+  updateBtn();
+}
+
+async function goToSeats(){
+  showStep(2);
+  document.getElementById('sessionHeader').textContent =
+    `🎬 ${selectedSession.movie} — ${selectedSession.date} в ${selectedSession.time}`;
+  selectedSeats = [];
+  document.getElementById('selCount').textContent = '0';
+  document.getElementById('selTotal').textContent = '0 ₽';
+  await loadSeats();
+}
+
+async function loadSeats(){
+  document.getElementById('seatMap').innerHTML = '<div class="empty">Загрузка...</div>';
+  try {
+    const r = await fetch(`/api/seats/${selectedSession.id}`);
+    const data = await r.json();
+    takenSeats = data.taken || [];
+    renderSeats();
+  } catch(e) {
+    document.getElementById('seatMap').innerHTML = '<div class="empty" style="color:var(--orange)">Ошибка загрузки мест</div>';
+  }
+}
+
+function renderSeats(){
+  const map = document.getElementById('seatMap');
+  map.innerHTML = '';
+  const total = selectedSession.total_seats;
+  const cols = Math.ceil(total / ROWS.length);
+  let num = 1;
+
+  for (let r = 0; r < ROWS.length; r++) {
+    if (num > total) break;
+
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const lbl = document.createElement('div');
+    lbl.className = 'row-lbl';
+    lbl.textContent = ROWS[r];
+    row.appendChild(lbl);
+
+    for (let c = 0; c < cols; c++) {
+      if (num > total) break;
+
+      const n = num++;
+      const seat = document.createElement('div');
+      seat.className = 'seat' + (takenSeats.includes(n) ? ' taken' : '');
+      seat.textContent = n;
+      seat.dataset.num = n;
+
+      if (!takenSeats.includes(n)) {
+        seat.addEventListener('click', () => toggleSeat(n, seat));
+      }
+
+      row.appendChild(seat);
+    }
+
+    map.appendChild(row);
+  }
+}
+
+function toggleSeat(n, el){
+  if (selectedSeats.includes(n)) {
+    selectedSeats = selectedSeats.filter(s => s !== n);
+    el.classList.remove('selected');
+  } else {
+    selectedSeats.push(n);
+    el.classList.add('selected');
+  }
+
+  const cnt = selectedSeats.length;
+  document.getElementById('selCount').textContent = cnt;
+  document.getElementById('selTotal').textContent = (cnt * selectedSession.price).toLocaleString('ru') + ' ₽';
+  updateBtn();
+}
+
+function goToForm(){
+  showStep(3);
+  const seats = [...selectedSeats].sort((a,b)=>a-b).join(', ');
+  const total = (selectedSeats.length * selectedSession.price).toLocaleString('ru');
+
+  document.getElementById('bookSummary').innerHTML = `
+    <div class="info-row"><div class="info-key">Фильм</div><div class="info-val">${selectedSession.movie}</div></div>
+    <div class="info-row"><div class="info-key">Дата и время</div><div class="info-val">${selectedSession.date} в ${selectedSession.time}</div></div>
+    <div class="info-row"><div class="info-key">Места</div><div class="info-val">${seats}</div></div>
+    <div class="info-row"><div class="info-key">К оплате</div><div class="info-val orange">${total} ₽</div></div>
+  `;
+
+  document.getElementById('mainBtn').textContent = `Оплатить ${total} ₽`;
+  document.getElementById('mainBtn').disabled = false;
+}
+
+async function submitPayment(){
+  const firstName = document.getElementById('firstName').value.trim();
+  const lastName = document.getElementById('lastName').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  const errEl = document.getElementById('formErr');
+  const btn = document.getElementById('mainBtn');
+
+  if (!firstName || !lastName || !phone) {
+    errEl.textContent = 'Заполните все поля';
+    errEl.classList.add('show');
+    return;
+  }
+
+  errEl.classList.remove('show');
+  btn.disabled = true;
+  btn.textContent = 'Переходим к оплате...';
+
+  const payload = {
+    session_id: selectedSession.id,
+    seats: selectedSeats,
+    first_name: firstName,
+    last_name: lastName,
+    phone: phone,
+    telegram_id: tg?.initDataUnsafe?.user?.id || null,
+    username: tg?.initDataUnsafe?.user?.username || ''
+  };
+
+  console.log('[PAYMENT PAYLOAD]', payload);
+
+  try {
+    const r = await fetch('/api/create-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await r.json();
+    console.log('[PAYMENT RESPONSE]', data);
+
+    if (data.ok && data.payment_url) {
+      if (tg && typeof tg.openLink === 'function') {
+        tg.openLink(data.payment_url);
+      } else {
+        window.location.href = data.payment_url;
+      }
+      return;
+    }
+
+    errEl.textContent = data.error || 'Не удалось создать оплату';
+    errEl.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = 'Оплатить';
+  } catch (e) {
+    console.error('[PAYMENT ERROR]', e);
+    errEl.textContent = 'Ошибка соединения';
+    errEl.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = 'Оплатить';
+  }
+}
+
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('payment') === 'success') {
+  showStep('success');
+} else {
+  loadSessions();
+}
+</script>
+</body>
+</html>html lang="ru">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
