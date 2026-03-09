@@ -128,7 +128,7 @@ def normalize_phone(raw_phone: str) -> str:
 
 def create_yookassa_payment(amount_rub, description, booking_id, user_payload):
     """
-    Создает платеж в ЮKassa и возвращает dict:
+    Создает платеж в ЮKassa через СБП и возвращает dict:
     {
       "payment_id": "...",
       "payment_url": "https://...",
@@ -146,6 +146,9 @@ def create_yookassa_payment(amount_rub, description, booking_id, user_payload):
             "currency": "RUB"
         },
         "capture": True,
+        "payment_method_data": {
+            "type": "sbp"
+        },
         "confirmation": {
             "type": "redirect",
             "return_url": YOOKASSA_RETURN_URL
